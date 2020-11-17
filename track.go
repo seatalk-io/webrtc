@@ -28,6 +28,9 @@ type Track struct {
 	ssrc        uint32
 	codec       *RTPCodec
 
+	// this track is using rid. (simulcasting)
+	useRid bool
+
 	packetizer rtp.Packetizer
 
 	receiver         *RTPReceiver

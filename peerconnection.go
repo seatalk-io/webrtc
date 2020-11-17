@@ -49,6 +49,7 @@ type PeerConnection struct {
 	negotiationNeeded            bool
 	nonTrickleCandidatesSignaled *atomicBool
 
+	sessionID  uint64
 	lastOffer  string
 	lastAnswer string
 
@@ -208,6 +209,8 @@ func (pc *PeerConnection) initConfiguration(configuration Configuration) error {
 	if configuration.SDPSemantics != SDPSemantics(Unknown) {
 		pc.configuration.SDPSemantics = configuration.SDPSemantics
 	}
+
+	pc.configuration.AcceptUndeclaredSSRCAsVideo = configuration.AcceptUndeclaredSSRCAsVideo
 
 	sanitizedICEServers := configuration.getICEServers()
 	if len(sanitizedICEServers) > 0 {
@@ -472,6 +475,7 @@ func (pc *PeerConnection) CreateOffer(options *OfferOptions) (SessionDescription
 		SDP:    string(sdpBytes),
 		parsed: d,
 	}
+	pc.sessionID = d.Origin.SessionID
 	pc.lastOffer = desc.SDP
 	return desc, nil
 }
@@ -1038,6 +1042,27 @@ func (pc *PeerConnection) startSCTP() {
 // If the remote SDP was only one media section the ssrc doesn't have to be explicitly declared
 func (pc *PeerConnection) drainSRTP() {
 	handleUndeclaredSSRC := func(ssrc uint32) bool {
+		// If always accepting, handle it
+		if pc.configuration.AcceptUndeclaredSSRCAsVideo {
+			incoming := trackDetails{
+				ssrc: ssrc,
+				kind: RTPCodecTypeVideo,
+			}
+			t, err := pc.AddTransceiverFromKind(incoming.kind, RtpTransceiverInit{
+				Direction: RTPTransceiverDirectionSendrecv,
+			})
+			if err != nil {
+				pc.log.Warnf("Could not add transceiver for remote SSRC %d: %s", ssrc, err)
+				return false
+			}
+			pc.startReceiver(incoming, t.Receiver())
+			// hacking.
+			t.Receiver().Track().mu.Lock()
+			t.Receiver().Track().useRid = true
+			t.Receiver().Track().mu.Unlock()
+			return true
+		}
+
 		if remoteDescription := pc.RemoteDescription(); remoteDescription != nil {
 			if len(remoteDescription.parsed.MediaDescriptions) == 1 {
 				onlyMediaSection := remoteDescription.parsed.MediaDescriptions[0]
@@ -1700,6 +1725,10 @@ func (pc *PeerConnection) startRTP(isRenegotiation bool, remoteDesc *SessionDesc
 				t.Receiver().Track().mu.Unlock()
 				continue
 			}
+			if t.Receiver().Track().useRid {
+				t.Receiver().Track().mu.Unlock()
+				continue
+			}
 			t.Receiver().Track().mu.Unlock()
 
 			if err := t.Receiver().Stop(); err != nil {
@@ -1803,6 +1832,9 @@ func (pc *PeerConnection) generateMatchedSDP(useIdentity bool, includeUnmatched 
 
 	if err := addFingerprints(d, pc.configuration.Certificates[0]); err != nil {
 		return nil, err
+	}
+	if pc.sessionID != 0 {
+		d.Origin.SessionID = pc.sessionID
 	}
 
 	iceParams, err := pc.iceGatherer.GetLocalParameters()
