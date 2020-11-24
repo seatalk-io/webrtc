@@ -210,8 +210,6 @@ func (pc *PeerConnection) initConfiguration(configuration Configuration) error {
 		pc.configuration.SDPSemantics = configuration.SDPSemantics
 	}
 
-	pc.configuration.AcceptUndeclaredSSRCAsVideo = configuration.AcceptUndeclaredSSRCAsVideo
-
 	sanitizedICEServers := configuration.getICEServers()
 	if len(sanitizedICEServers) > 0 {
 		for _, server := range sanitizedICEServers {
@@ -1043,56 +1041,24 @@ func (pc *PeerConnection) startSCTP() {
 func (pc *PeerConnection) drainSRTP() {
 	handleUndeclaredSSRC := func(ssrc uint32) bool {
 		// If always accepting, handle it
-		if pc.configuration.AcceptUndeclaredSSRCAsVideo {
-			incoming := trackDetails{
-				ssrc: ssrc,
-				kind: RTPCodecTypeVideo,
-			}
-			t, err := pc.AddTransceiverFromKind(incoming.kind, RtpTransceiverInit{
-				Direction: RTPTransceiverDirectionSendrecv,
-			})
-			if err != nil {
-				pc.log.Warnf("Could not add transceiver for remote SSRC %d: %s", ssrc, err)
-				return false
-			}
-			pc.startReceiver(incoming, t.Receiver())
-			// hacking.
-			t.Receiver().Track().mu.Lock()
-			t.Receiver().Track().useRid = true
-			t.Receiver().Track().mu.Unlock()
-			return true
+		incoming := trackDetails{
+			ssrc: ssrc,
+			kind: RTPCodecTypeVideo,
 		}
-
-		if remoteDescription := pc.RemoteDescription(); remoteDescription != nil {
-			if len(remoteDescription.parsed.MediaDescriptions) == 1 {
-				onlyMediaSection := remoteDescription.parsed.MediaDescriptions[0]
-				for _, a := range onlyMediaSection.Attributes {
-					if a.Key == ssrcStr {
-						return false
-					}
-				}
-
-				incoming := trackDetails{
-					ssrc: ssrc,
-					kind: RTPCodecTypeVideo,
-				}
-				if onlyMediaSection.MediaName.Media == RTPCodecTypeAudio.String() {
-					incoming.kind = RTPCodecTypeAudio
-				}
-
-				t, err := pc.AddTransceiverFromKind(incoming.kind, RtpTransceiverInit{
-					Direction: RTPTransceiverDirectionSendrecv,
-				})
-				if err != nil {
-					pc.log.Warnf("Could not add transceiver for remote SSRC %d: %s", ssrc, err)
-					return false
-				}
-				pc.startReceiver(incoming, t.Receiver())
-				return true
-			}
+		t, err := pc.AddTransceiverFromKind(incoming.kind, RtpTransceiverInit{
+			Direction: RTPTransceiverDirectionSendrecv,
+		})
+		if err != nil {
+			pc.log.Warnf("Could not add transceiver for remote SSRC %d: %s", ssrc, err)
+			return false
 		}
-
-		return false
+		pc.startReceiver(incoming, t.Receiver())
+		if track := t.Receiver().Track(); track != nil { // hacking.
+			track.mu.Lock()
+			track.useRid = true
+			track.mu.Unlock()
+		}
+		return true
 	}
 
 	go func() {
