@@ -1180,6 +1180,40 @@ func (pc *PeerConnection) GetTransceivers() []*RTPTransceiver {
 	return pc.rtpTransceivers
 }
 
+// AddTrackOnTransceiver adds a Track to the PeerConnection's Transceiver, as per filtered by selectorFn
+func (pc *PeerConnection) AddTrackOnTransceiver(track *Track, selectorFn func(t *RTPTransceiver) bool) (*RTPSender, error) {
+	if pc.isClosed.get() {
+		return nil, &rtcerr.InvalidStateError{Err: ErrConnectionClosed}
+	}
+
+	var transceiver *RTPTransceiver
+	for _, t := range pc.GetTransceivers() {
+		if !t.stopped && t.kind == track.Kind() && t.Sender() == nil && selectorFn(t) {
+			transceiver = t
+			break
+		}
+	}
+	if transceiver != nil {
+		sender, err := pc.api.NewRTPSender(track, pc.dtlsTransport)
+		if err != nil {
+			return nil, err
+		}
+		transceiver.setSender(sender)
+		// we still need to call setSendingTrack to ensure direction has changed
+		if err := transceiver.setSendingTrack(track); err != nil {
+			return nil, err
+		}
+		return sender, nil
+	}
+
+	transceiver, err := pc.AddTransceiverFromTrack(track)
+	if err != nil {
+		return nil, err
+	}
+
+	return transceiver.Sender(), nil
+}
+
 // AddTrack adds a Track to the PeerConnection
 func (pc *PeerConnection) AddTrack(track *Track) (*RTPSender, error) {
 	if pc.isClosed.get() {
