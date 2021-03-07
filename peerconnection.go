@@ -1876,6 +1876,11 @@ func (pc *PeerConnection) Close() error {
 	return util.FlattenErrs(closeErrs)
 }
 
+// NewRTPSender creates a new RTPSender for track
+func (pc *PeerConnection) NewRTPSender(track TrackLocal) (*RTPSender, error) {
+	return pc.api.NewRTPSender(track, pc.dtlsTransport)
+}
+
 // addRTPTransceiver appends t into rtpTransceivers
 // and fires onNegotiationNeeded;
 // caller of this method should hold `pc.mu` lock
